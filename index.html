@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Study Guide Architect | GPT Version</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/showdown/dist/showdown.min.js"></script>
+    <style>
+        body { font-family: sans-serif; }
+        @media print {
+            #controls, #error-message, #pdf-upload, #api-key-input, #topics-input, #suggest-topics-btn, #generate-btn, #download-btn {
+                display: none;
+            }
+            body {
+                background-color: white;
+                color: black;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 p-6">
+
+    <div id="controls">
+        <h1 class="text-4xl font-bold mb-4">Study Guide Architect (GPT Version)</h1>
+
+        <input type="file" id="pdf-upload" accept=".pdf" class="mb-4">
+        <p id="file-name" class="mb-4 text-sm text-blue-300"></p>
+
+        <textarea id="topics-input" rows="5" placeholder="Enter topics (one per line)..." class="w-full p-3 bg-gray-800 text-white mb-4"></textarea>
+
+        <input type="password" id="api-key-input" placeholder="Enter your OpenAI API key" class="w-full p-3 bg-gray-800 text-white mb-4">
+
+        <button id="suggest-topics-btn" class="bg-blue-600 px-4 py-2 rounded text-white mr-2">Suggest Topics</button>
+        <button id="generate-btn" class="bg-green-600 px-4 py-2 rounded text-white mr-2">Generate Study Guide</button>
+        <button id="download-btn" class="bg-yellow-600 px-4 py-2 rounded text-white">Print / Export PDF</button>
+
+        <div id="error-message" class="mt-4 text-red-400 hidden"></div>
+    </div>
+
+    <div id="study-guide-content" class="mt-8 space-y-6"></div>
+
+    <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+    const markdownConverter = new showdown.Converter();
+
+    const pdfUpload = document.getElementById('pdf-upload');
+    const fileNameDisplay = document.getElementById('file-name');
+    const topicsInput = document.getElementById('topics-input');
+    const apiKeyInput = document.getElementById('api-key-input');
+    const suggestBtn = document.getElementById('suggest-topics-btn');
+    const generateBtn = document.getElementById('generate-btn');
+    const downloadBtn = document.getElementById('download-btn');
+    const errorMsg = document.getElementById('error-message');
+    const studyGuideContent = document.getElementById('study-guide-content');
+
+    let pdfText = '';
+
+    pdfUpload.addEventListener('change', handlePdfUpload);
+    suggestBtn.addEventListener('click', suggestTopics);
+    generateBtn.addEventListener('click', generateStudyGuide);
+    downloadBtn.addEventListener('click', () => window.print());
+
+    async function handlePdfUpload(e) {
+        const file = e.target.files[0];
+        if (!file || file.type !== 'application/pdf') {
+            showError('Please upload a valid PDF.');
+            return;
+        }
+        fileNameDisplay.textContent = `Reading ${file.name}...`;
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+        let text = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            text += content.items.map(item => item.str).join(' ');
+        }
+        pdfText = text;
+        fileNameDisplay.textContent = `Loaded: ${file.name}`;
+    }
+
+    async function suggestTopics() {
+        if (!pdfText) return showError("Upload a PDF first.");
+        const prompt = `List up to 7 important study topics from this document:\n---\n${pdfText.slice(0, 8000)}\n---`;
+        try {
+            const result = await callOpenAIAPI(prompt);
+            topicsInput.value = result.trim();
+        } catch (e) {
+            showError(e.message);
+        }
+    }
+
+    async function generateStudyGuide() {
+        if (!pdfText) return showError("Upload a PDF first.");
+        const topics = topicsInput.value.trim().split('\n').filter(Boolean);
+        if (topics.length === 0) return showError("Add at least one topic.");
+
+        studyGuideContent.innerHTML = '';
+        for (const topic of topics) {
+            const prompt = `Create a study guide for: "${topic}"\nDocument:\n${pdfText.slice(0, 8000)}\nInclude:\n### Summary\n### Key Terms (as **Term**: Definition)\n### Study Questions`;
+            try {
+                const result = await callOpenAIAPI(prompt);
+                const html = markdownConverter.makeHtml(result);
+                const div = document.createElement('div');
+                div.className = 'bg-gray-800 p-4 rounded shadow';
+                div.innerHTML = `<h2 class='text-2xl font-bold mb-2 text-white'>${topic}</h2>` + html;
+                studyGuideContent.appendChild(div);
+            } catch (e) {
+                showError(e.message);
+                return;
+            }
+        }
+    }
+
+    async function callOpenAIAPI(prompt) {
+        const apiKey = apiKeyInput.value.trim();
+        if (!apiKey) throw new Error("OpenAI API key is missing.");
+
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: "gpt-3.5-turbo",
+                messages: [{ role: "user", content: prompt }],
+                temperature: 0.7
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API Error: ${response.status} - ${errorText}`);
+        }
+
+        const data = await response.json();
+        return data.choices[0].message.content;
+    }
+
+    function showError(msg) {
+        errorMsg.textContent = msg;
+        errorMsg.classList.remove('hidden');
+    }
+    </script>
+</body>
+</html>
